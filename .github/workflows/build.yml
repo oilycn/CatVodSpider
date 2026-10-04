@@ -5,11 +5,16 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+# 关键：开启 GitHub Release 写入权限，解决 403 报错
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: 设置 Java 环境
         uses: actions/setup-java@v4
         with:
@@ -21,14 +26,34 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleRelease
 
-      - name: 提取并重命名 Jar
+      - name: 智能搜寻并提取 Jar 产物
         run: |
           mkdir -p output
-          # 提取打包出来的 classes.dex / spider.jar
-          find app/build/outputs -name "*.jar" -exec cp {} output/spider.jar \;
+          # 打印所有编译出来的产物，防止找错路径
+          echo "=== 编译产物列表 ==="
+          find . -name "*.jar" -o -name "*.dex"
+          
+          # 自动寻找任何生成的 jar 文件，重命名为 spider.jar 复制到 output 目录
+          JAR_FILE=$(find app/build/outputs -name "*.jar" | head -n 1)
+          if [ -z "$JAR_FILE" ]; then
+            # 备用方案：如果在 outputs 下没找到，搜寻整个 app/build
+            JAR_FILE=$(find . -path "*/build/*" -name "*.jar" ! -name "gradle*" | head -n 1)
+          fi
+          
+          if [ -n "$JAR_FILE" ]; then
+            echo "找到目标产物: $JAR_FILE"
+            cp "$JAR_FILE" output/spider.jar
+          else
+            echo "未找到 jar，搜寻是否有直接打包出的 dex/zip"
+            find . -name "*.dex"
+            exit 1
+          fi
 
       - name: 上传产物到 Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
+          name: "Latest Spider Jar"
           files: output/spider.jar
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
